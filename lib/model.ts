@@ -1,4 +1,4 @@
-// The token radar's model, radar-2: one snapshot of the protocol universe in,
+// The token radar's model, radar-3: one snapshot of the protocol universe in,
 // one ranked board out.
 //
 // The board covers every slug in the snapshot's watchlist (the floor, never a
@@ -24,6 +24,14 @@
 //                  (age_days unknown: 365)
 //   chains         = 1 + 0.02 x min(chains - 1, 10)
 //   implied        = max(1, round(base x growthMult x maturity x chains))
+//
+// radar-3 adds a readiness score (0-100) beside the implied value, from the
+// same figures, so a reader can tell a well-supported launch from a thin
+// one at a glance: peer support (40: 3+ live peers behind the multiple, 20:
+// 1-2, 10: none), growth (30: the 7-day change mapped from [-60, +120] to
+// 0-30) and maturity (30: the maturity multiplier mapped from [0.60, 1.00]
+// to 0-30). The implied value is unchanged from radar-2; readiness only
+// ranks confidence, never the money.
 //
 // The dashboard states the formula and the peer table, and the page
 // recomputes every row from the same figures, so the board, the page and
@@ -84,7 +92,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it. */
-export const MODEL_VERSION = 'radar-2';
+export const MODEL_VERSION = 'radar-3';
 
 /** How many live-token protocols the Live token view carries, by market cap. */
 export const LIVE_ROWS = 24;
@@ -130,6 +138,11 @@ export interface BoardRow {
     maturity_multiplier: number;
     chain_multiplier: number;
     age_days: number | null;
+    /** radar-3: how well-supported the launch is (0-100), and its parts. */
+    readiness: number;
+    readiness_peer: number;
+    readiness_growth: number;
+    readiness_maturity: number;
   };
   farm_steps: string[];
 }
@@ -152,6 +165,11 @@ export interface RadarRow {
   growth_multiplier: number;
   maturity_multiplier: number;
   chain_multiplier: number;
+  /** radar-3: readiness (0-100) and its parts, from the same figures. */
+  readiness: number;
+  readiness_peer: number;
+  readiness_growth: number;
+  readiness_maturity: number;
   /** Whether the slug is on the snapshot's watchlist (the floor). */
   watch: boolean;
 }
@@ -253,6 +271,14 @@ export function ageDays(asOf: string, listedAt: string | null): number | null {
   return Math.max(0, Math.floor((a - b) / DAY_MS));
 }
 
+/** radar-3 readiness (0-100): how well-supported a launch is, from the same figures the implied value uses. Peer support is 40 points (3+ live peers behind the multiple, 20 for 1-2, 10 for none); growth maps the clamped 7-day change [-60, +120] to 0-30; maturity maps the multiplier [0.60, 1.00] to 0-30. It ranks confidence, never the money. */
+export function readinessFor(peerCount: number, growthPct: number, maturityMult: number): { readiness: number; peer: number; growth: number; maturity: number } {
+  const peer = peerCount >= 3 ? 40 : peerCount >= 1 ? 20 : 10;
+  const growth = Math.max(0, Math.min(30, Math.round(((growthPct + 60) / 180) * 30)));
+  const maturity = Math.max(0, Math.min(30, Math.round(((maturityMult - 0.6) / 0.4) * 30)));
+  return { readiness: peer + growth + maturity, peer, growth, maturity };
+}
+
 /** The multipliers and the implied value one protocol gets under `model`. */
 export function impliedValue(
   protocol: SnapshotProtocol,
@@ -337,6 +363,10 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
       maturity_multiplier: round4(s.maturityMult),
       chain_multiplier: round4(s.chainMult),
       age_days: s.age,
+      readiness: readinessFor(s.peerCount, s.growthPct, s.maturityMult).readiness,
+      readiness_peer: readinessFor(s.peerCount, s.growthPct, s.maturityMult).peer,
+      readiness_growth: readinessFor(s.peerCount, s.growthPct, s.maturityMult).growth,
+      readiness_maturity: readinessFor(s.peerCount, s.growthPct, s.maturityMult).maturity,
     },
     farm_steps: farmSteps(s.p, s.age).map(stepText),
   }));
@@ -495,6 +525,10 @@ export function radarRow(row: BoardRow, watch: boolean): RadarRow {
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
     chain_multiplier: row.model.chain_multiplier,
+    readiness: row.model.readiness,
+    readiness_peer: row.model.readiness_peer,
+    readiness_growth: row.model.readiness_growth,
+    readiness_maturity: row.model.readiness_maturity,
     watch,
   };
 }

@@ -6,7 +6,7 @@
 
 Build the best token launch radar. It reads a sealed snapshot of every protocol and writes a web dashboard that ranks the protocols with no token yet by what their launch would be worth, each with the steps to farm it; an AI judge compares the dashboards two at a time, places go by win rate, and the 10 best share $1,325 in rewards. Built by an AI agent for make.fun's “Build the best token launch radar” bounty, $1,325 in USDC.
 
-## Model (radar-2)
+## Model (radar-3)
 
 Implied value = TVL × **peer multiple** × growth × maturity × chains.
 
@@ -14,6 +14,9 @@ Implied value = TVL × **peer multiple** × growth × maturity × chains.
 - **Growth**: the 7-day TVL change, clamped to [−60%, +120%], at half weight.
 - **Maturity**: rises from 0.60 to 1.00 over three years with no token (unknown age: 365 days).
 - **Chains**: each extra chain adds 2%, to +20%.
+- **Readiness (0–100)**: how well-supported a launch is, from the same figures — peer support 40 (3+ live peers behind the multiple, 20 for 1–2, 10 for none), growth 30 (the 7-day change mapped from [−60%, +120%]), maturity 30 (the multiplier mapped from [0.60, 1.00]). Readiness ranks confidence, never the money; the implied value is unchanged from radar-2.
+
+The dashboard adds a top-10 spotlight (cards + bar chart), a readiness column with a sortable score, the peer multiple in the board, a chain filter beside the category filter, and a readiness breakdown plus a farm-at-a-glance line in every protocol's detail view.
 
 The board covers all 40 watchlist protocols (TVL at or above the $50M floor, recording no token, not a wrapped/staked product of a token that trades) plus every rankable pre-token protocol below the floor — 226 rows in all. Each row carries a 7-step farm plan derived from the protocol's own record (category, chains, TVL, age), with what each step costs and how long it takes. Live-token protocols are shown separately at the market's own value, never mixed into the ranked board.
 

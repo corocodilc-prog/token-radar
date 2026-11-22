@@ -11,7 +11,7 @@
   var app = document.getElementById('board');
   var watch = {};
   DATA.rows.forEach(function (r) { if (r.watch) watch[r.slug] = true; });
-  var state = { q: '', category: 'all', tab: 'board', sort: 'implied_value_usd', dir: -1, selected: null };
+  var state = { q: '', category: 'all', chain: 'all', tab: 'board', sort: 'implied_value_usd', dir: -1, selected: null };
   var WATCH = DATA.rows.filter(function (r) { return r.watch; }).length;
 
   var usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -50,6 +50,16 @@
     var chainMult = 1 + model.chain_step * Math.min(Math.max(row.chains.length - 1, 0), model.chain_cap);
     var implied = Math.max(1, Math.round(row.tvl_usd * m.multiple * growthMult * maturity * chainMult));
     return { implied: implied, multiple: m.multiple, peers: m.peers, fallback: m.fallback, growth: growth, growthMult: growthMult, maturity: maturity, chainMult: chainMult, age: age };
+  }
+
+  // radar-3 readiness (0-100), mirroring lib/model.ts: peer support 40/20/10,
+  // growth mapped from [-60, +120] to 0-30, maturity mapped from [0.60, 1.00] to 0-30.
+  function readinessOf(row) {
+    var calc = impliedOf(row, DATA.model);
+    var peerPts = calc.peers >= 3 ? 40 : calc.peers >= 1 ? 20 : 10;
+    var growthPts = Math.max(0, Math.min(30, Math.round(((calc.growth + 60) / 180) * 30)));
+    var matPts = Math.max(0, Math.min(30, Math.round(((calc.maturity - 0.6) / 0.4) * 30)));
+    return { readiness: peerPts + growthPts + matPts, peer: peerPts, growth: growthPts, maturity: matPts };
   }
 
   function el(tag, attrs) {
@@ -146,6 +156,7 @@
     var rows = DATA.rows;
     if (state.tab === 'watchlist') rows = rows.filter(function (r) { return r.watch; });
     if (state.category !== 'all') rows = rows.filter(function (r) { return (r.category || 'Uncategorised') === state.category; });
+    if (state.chain !== 'all') rows = rows.filter(function (r) { return (r.chains || []).indexOf(state.chain) >= 0; });
     if (state.q) {
       var q = state.q.toLowerCase();
       rows = rows.filter(function (r) { return r.name.toLowerCase().indexOf(q) >= 0 || r.slug.toLowerCase().indexOf(q) >= 0 || (r.category || '').toLowerCase().indexOf(q) >= 0; });
@@ -170,6 +181,41 @@
     } });
   }
 
+  // radar-3 spotlight: the top 10 by implied value, as cards with a bar chart,
+  // so the best launches are visible before the full table.
+  function renderSpotlight() {
+    var top = DATA.rows.slice(0, 10);
+    if (top.length === 0) return el('div');
+    var maxImp = top[0].implied_value_usd || 1;
+    var sec = el('section', { class: 'spot' });
+    sec.appendChild(el('h2', { text: 'Top 10 to watch' }));
+    sec.appendChild(el('p', { class: 'spot-sub', text: 'The highest implied values on the board — click any card for its detail view and farm plan.' }));
+    var chart = el('div', { class: 'chart' });
+    top.forEach(function (r) {
+      var row = el('div', { class: 'crow' });
+      row.appendChild(el('span', { class: 'cnum', text: '#' + r.rank }));
+      row.appendChild(el('span', { class: 'cname', text: r.name }));
+      var cbar = el('div', { class: 'cbar' });
+      cbar.appendChild(el('i', { style: 'width:' + Math.max(2, Math.round(100 * r.implied_value_usd / maxImp)) + '%' }));
+      row.appendChild(cbar);
+      row.appendChild(el('span', { class: 'cval', text: fmtUsd(r.implied_value_usd) }));
+      chart.appendChild(row);
+    });
+    sec.appendChild(chart);
+    var cards = el('div', { class: 'cards' });
+    top.forEach(function (r) {
+      var ready = readinessOf(r);
+      var card = el('button', { class: 'card', onclick: function () { openDetail(r.slug); } });
+      card.appendChild(el('div', { class: 'card-rank', text: '#' + r.rank }));
+      card.appendChild(el('div', { class: 'card-name', text: r.name }));
+      card.appendChild(el('div', { class: 'card-imp', text: fmtUsd(r.implied_value_usd) }));
+      card.appendChild(el('div', { class: 'card-rdy', text: 'Readiness ' + ready.readiness + '/100 · ' + (r.category || 'Uncategorised') }));
+      cards.appendChild(card);
+    });
+    sec.appendChild(cards);
+    return sec;
+  }
+
   function renderBoardTable() {
     var rows = visibleRows();
     var maxImp = DATA.rows.length ? DATA.rows[0].implied_value_usd : 1;
@@ -183,11 +229,13 @@
     head.appendChild(el('th', { class: 'num' }, sortButton('TVL', 'tvl_usd')));
     head.appendChild(el('th', { class: 'num' }, sortButton('7d', 'change_7d')));
     head.appendChild(el('th', { class: 'num' }, sortButton('Age', 'age_days')));
+    head.appendChild(el('th', { class: 'num' }, sortButton('Multiple', 'peer_multiple')));
+    head.appendChild(el('th', { class: 'num' }, sortButton('Readiness', 'readiness')));
     head.appendChild(el('th', { class: 'num' }, sortButton('Implied value', 'implied_value_usd')));
     table.appendChild(el('thead', {}, head));
     var body = el('tbody');
     if (rows.length === 0) {
-      body.appendChild(el('tr', {}, el('td', { colspan: 8, class: 'empty', text: 'Nothing on the radar matches that filter.' })));
+      body.appendChild(el('tr', {}, el('td', { colspan: 10, class: 'empty', text: 'Nothing on the radar matches that filter.' })));
     }
     rows.forEach(function (r) {
       var tr = el('tr', { class: state.selected === r.slug ? 'sel' : '', onclick: function () { openDetail(r.slug); } });
@@ -197,6 +245,12 @@
       var bar = el('div', { class: 'bar' });
       bar.appendChild(el('i', { style: 'width:' + Math.max(2, Math.round(100 * r.implied_value_usd / maxImp)) + '%' }));
       imp.appendChild(bar);
+      var ready = readinessOf(r);
+      var rdy = el('div');
+      rdy.appendChild(el('span', { class: 'rdy' + (ready.readiness >= 70 ? ' hi' : ready.readiness >= 50 ? ' mid' : ' lo'), text: String(ready.readiness) }));
+      var rbar = el('div', { class: 'bar rbar' });
+      rbar.appendChild(el('i', { style: 'width:' + ready.readiness + '%' }));
+      rdy.appendChild(rbar);
       tr.appendChild(el('td', { class: 'num' }, el('span', { class: 'rank' + (r.rank <= 3 ? ' top' : ''), text: String(r.rank) })));
       var nameCell = el('td');
       nameCell.appendChild(el('span', { class: 'name', text: r.name + ' ' }));
@@ -208,6 +262,8 @@
       tr.appendChild(el('td', { class: 'num', text: fmtUsd(r.tvl_usd) }));
       tr.appendChild(el('td', { class: 'num' }, pct));
       tr.appendChild(el('td', { class: 'num', text: fmtAge(r.age_days) }));
+      tr.appendChild(el('td', { class: 'num', text: r.peer_multiple !== null && r.peer_multiple !== undefined ? r.peer_multiple.toFixed(2) + '×' : 'n/a' }));
+      tr.appendChild(el('td', { class: 'num' }, rdy));
       tr.appendChild(el('td', { class: 'num' }, imp));
       body.appendChild(tr);
     });
@@ -269,6 +325,17 @@
     mrow('Chain spread (' + (row.chains || []).length + ' chains)', calc.chainMult.toFixed(4) + '×', calc.chainMult.toFixed(4) + '×');
     math.appendChild(el('tr', { class: 'total' }, el('td', { text: 'Implied value' }), el('td', { text: fmtUsd(row.implied_value_usd) }), el('td', { text: calc.implied === row.implied_value_usd ? '✓ matches board' : 'recomputed ' + fmtUsd(calc.implied) })));
     drawer.appendChild(math);
+    var ready = readinessOf(row);
+    var rdy = el('table', { class: 'math' });
+    rdy.appendChild(el('tr', {}, el('th', { text: 'Readiness — how well-supported the launch is' }), el('th', { text: 'Points' }), el('th', { text: 'of' })));
+    rdy.appendChild(el('tr', {}, el('td', { text: 'Peer support (' + calc.peers + ' live peers behind the multiple)' }), el('td', { text: String(ready.peer) }), el('td', { text: '40' })));
+    rdy.appendChild(el('tr', {}, el('td', { text: 'Growth (' + fmtPct(row.change_7d) + ' in 7 days)' }), el('td', { text: String(ready.growth) }), el('td', { text: '30' })));
+    rdy.appendChild(el('tr', {}, el('td', { text: 'Maturity (' + fmtAge(row.age_days) + ' with no token)' }), el('td', { text: String(ready.maturity) }), el('td', { text: '30' })));
+    rdy.appendChild(el('tr', { class: 'total' }, el('td', { text: 'Readiness' }), el('td', { text: String(ready.readiness) }), el('td', { text: '100' })));
+    drawer.appendChild(rdy);
+    var cap = capitalFor(row);
+    var hold = holdDaysFor(row.age_days);
+    drawer.appendChild(el('p', { class: 'farm-sum', html: '<b>Farm at a glance:</b> $' + cap + ' capital · hold ' + hold + ' days · 7 steps · about 50 minutes of active time.' }));
     drawer.appendChild(el('h3', { text: 'Farm plan — 7 steps' }));
     var steps = el('ol', { class: 'steps' });
     farmSteps(row).forEach(function (s) {
@@ -299,7 +366,8 @@
       stats.appendChild(el('div', { class: 'stat' }, el('div', { class: 'n', text: s[1] }), el('div', { class: 'l', text: s[0] })));
     });
     wrap.appendChild(stats);
-    wrap.appendChild(el('p', { class: 'model-line', html: '<b>Model ' + DATA.model_version + ':</b> implied value = TVL × <code>peer multiple</code> × growth × maturity × chains. The peer multiple is the category\u2019s median market-cap / TVL over the snapshot\u2019s own live-token protocols (3+ peers, else the global median ' + DATA.peers.global.toFixed(3) + '×); growth is the 7-day TVL change clamped to [−60%, +120%] at half weight; maturity rises from 0.60 to 1.00 over three years with no token; each extra chain adds 2%, to +20%. No protocol name is ever special-cased.' }));
+    wrap.appendChild(renderSpotlight());
+    wrap.appendChild(el('p', { class: 'model-line', html: '<b>Model ' + DATA.model_version + ':</b> implied value = TVL × <code>peer multiple</code> × growth × maturity × chains. The peer multiple is the category\u2019s median market-cap / TVL over the snapshot\u2019s own live-token protocols (3+ peers, else the global median ' + DATA.peers.global.toFixed(3) + '×); growth is the 7-day TVL change clamped to [−60%, +120%] at half weight; maturity rises from 0.60 to 1.00 over three years with no token; each extra chain adds 2%, to +20%. <b>Readiness (0–100)</b> scores how well-supported a launch is: peer support 40 (3+ live peers), growth 30, maturity 30. No protocol name is ever special-cased.' }));
     var controls = el('div', { class: 'controls' });
     var tabs = el('div', { class: 'tabs' });
     [['board', 'Board'], ['watchlist', 'Watchlist (' + DATA.watchlist_size + ')'], ['live', 'Live tokens']].forEach(function (t) {
@@ -316,6 +384,16 @@
       sel.appendChild(o);
     });
     controls.appendChild(sel);
+    var chainList = ['all'];
+    DATA.rows.forEach(function (r) { (r.chains || []).forEach(function (c) { if (chainList.indexOf(c) < 0) chainList.push(c); }); });
+    chainList.sort();
+    var chainSel = el('select', { class: 'cat', 'aria-label': 'Filter by chain', onchange: function (e) { state.chain = e.target.value; render(); } });
+    chainList.forEach(function (c) {
+      var o = el('option', { value: c, text: c === 'all' ? 'All chains' : c });
+      if (state.chain === c) o.selected = true;
+      chainSel.appendChild(o);
+    });
+    controls.appendChild(chainSel);
     controls.appendChild(el('input', { class: 'search', type: 'search', placeholder: 'Search name, slug or category…', value: state.q, 'aria-label': 'Search protocols', oninput: function (e) { state.q = e.target.value; renderTableOnly(); } }));
     wrap.appendChild(controls);
     var count = el('p', { class: 'count', id: 'rowcount' });
@@ -335,7 +413,7 @@
     method.appendChild(peers);
     method.appendChild(el('p', { html: 'Each farm plan is derived from the protocol\u2019s own record — its category decides the action, its TVL decides the capital ($50–$250), its age decides the hold (30–60 days) — with what each step costs and how long it takes. Nothing here predicts whether or when a token is issued.' }));
     wrap.appendChild(method);
-    wrap.appendChild(el('footer', { text: 'Source: ' + DATA.source + '. Implied values are this entry\u2019s own model (radar-2), not a prediction and never make.fun\u2019s claim. Built from the sealed snapshot of ' + DATA.as_of + '; the page runs with no network.' }));
+    wrap.appendChild(el('footer', { text: 'Source: ' + DATA.source + '. Implied values are this entry\u2019s own model (' + DATA.model_version + '), not a prediction and never make.fun\u2019s claim. Built from the sealed snapshot of ' + DATA.as_of + '; the page runs with no network.' }));
     renderTableOnly();
     if (state.selected) openDetail(state.selected);
   }
